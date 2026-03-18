@@ -11,13 +11,15 @@ import {
   GatewayIntentBits,
   TextChannel,
   ThreadChannel,
-  ChannelType,
+  NewsChannel,
   type Guild,
   type Message,
 } from "discord.js";
 import { z } from "zod";
 
-// --- Discord client ---
+// --- Discord client (lazy connection) ---
+
+let discordReady: Promise<void>;
 
 const client = new Client({
   intents: [
@@ -26,6 +28,10 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+async function ensureDiscordConnected(): Promise<void> {
+  await discordReady;
+}
 
 // --- Helpers ---
 
@@ -336,30 +342,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    await ensureDiscordConnected();
+
     switch (name) {
       case "list-channels": {
         const { server: serverId } = ListChannelsSchema.parse(args);
         const guild = await resolveGuild(serverId);
 
-        const channels = guild.channels.cache
-          .filter(
-            (c) =>
-              c.type === ChannelType.GuildText ||
-              c.type === ChannelType.GuildAnnouncement
-          )
+        const textChannels = guild.channels.cache.filter(
+          (c): c is TextChannel => c instanceof TextChannel
+        );
+        const newsChannels = guild.channels.cache.filter(
+          (c): c is NewsChannel => c instanceof NewsChannel
+        );
+        const allChannels = [...textChannels.values(), ...newsChannels.values()]
           .sort((a, b) => a.position - b.position)
           .map((c) => ({
             name: `#${c.name}`,
             id: c.id,
-            type: c.type === ChannelType.GuildAnnouncement ? "announcement" : "text",
-            topic: "topic" in c ? (c.topic ?? undefined) : undefined,
+            type: c instanceof NewsChannel ? "announcement" : "text",
+            topic: c.topic ?? undefined,
           }));
 
         return {
           content: [
             {
               type: "text",
-              text: `Channels in "${guild.name}":\n${JSON.stringify(channels, null, 2)}`,
+              text: `Channels in "${guild.name}":\n${JSON.stringify(allChannels, null, 2)}`,
             },
           ],
         };
@@ -521,12 +530,20 @@ async function main() {
     process.exit(1);
   }
 
-  await client.login(token);
-  console.error("Discord bot connected");
-
+  // Start MCP transport FIRST so Claude Code can discover tools immediately.
+  // Discord connects in the background; tools wait via ensureDiscordConnected().
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Discord MCP server running on stdio");
+
+  discordReady = client.login(token).then(() => {
+    console.error("Discord bot connected");
+  });
+
+  discordReady.catch((error) => {
+    console.error("Discord login failed:", error);
+    process.exit(1);
+  });
 }
 
 main().catch((error) => {
