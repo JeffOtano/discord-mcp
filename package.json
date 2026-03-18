@@ -1,0 +1,35 @@
+{
+  "name": "discord-mcp",
+  "version": "1.0.0",
+  "description": "Discord MCP server for reading channel messages, feedback, and errors",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "discord-mcp": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc -w"
+  },
+  "keywords": [
+    "discord",
+    "mcp",
+    "claude",
+    "model-context-protocol"
+  ],
+  "author": "JeffOtano",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.12.1",
+    "discord.js": "14.18.0",
+    "zod": "3.24.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.14.0",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
