@@ -91,21 +91,29 @@ async function listScannableChannels(token, guildId) {
   return channels;
 }
 
-async function fetchSince(token, channel, afterSnowflake, guildId, includeBots) {
+async function fetchSince(token, channel, sinceSnowflake, guildId, includeBots) {
   const collected = [];
-  let after = afterSnowflake;
-  // Discord returns newest-first; page forward by raising `after` to the newest id seen.
-  for (let page = 0; page < 20; page++) {
+  const sinceId = BigInt(sinceSnowflake);
+  let before;
+  // Walk newest-first with `before`, stopping once we cross the cutoff. This
+  // guarantees recent messages are never starved by an old high-volume burst
+  // (e.g. a runaway notification loop) that would otherwise eat a forward cap.
+  for (let page = 0; page < 200; page++) {
     const res = await discord(
       token,
-      `/channels/${channel.id}/messages?limit=100&after=${after}`,
+      `/channels/${channel.id}/messages?limit=100${before ? `&before=${before}` : ""}`,
     );
     if (res.status === 403) return { messages: [], skipped: true };
     if (!res.ok) return { messages: collected, skipped: false };
     const batch = await res.json();
     if (!Array.isArray(batch) || batch.length === 0) break;
 
+    let reachedCutoff = false;
     for (const m of batch) {
+      if (BigInt(m.id) <= sinceId) {
+        reachedCutoff = true;
+        continue;
+      }
       if (!includeBots && m.author?.bot) continue;
       collected.push({
         channelId: channel.id,
@@ -114,14 +122,21 @@ async function fetchSince(token, channel, afterSnowflake, guildId, includeBots) 
         messageId: m.id,
         author: m.author?.username ?? "unknown",
         authorId: m.author?.id,
+        isBot: Boolean(m.author?.bot),
         content: m.content,
         timestamp: m.timestamp,
         url: `https://discord.com/channels/${guildId}/${channel.id}/${m.id}`,
         attachments: (m.attachments ?? []).map((a) => ({ name: a.filename, url: a.url })),
+        embeds: (m.embeds ?? []).map((e) => ({
+          title: e.title ?? undefined,
+          description: e.description ?? undefined,
+          url: e.url ?? undefined,
+          fields: (e.fields ?? []).map((f) => ({ name: f.name, value: f.value })),
+        })),
       });
     }
-    after = batch.reduce((max, m) => (BigInt(m.id) > BigInt(max) ? m.id : max), after);
-    if (batch.length < 100) break;
+    before = batch[batch.length - 1].id; // oldest id in this batch
+    if (reachedCutoff || batch.length < 100) break;
   }
   return { messages: collected, skipped: false };
 }
